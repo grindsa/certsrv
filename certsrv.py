@@ -99,6 +99,17 @@ class Certsrv(object):
             from requests_ntlm import HttpNtlmAuth
 
             self.session.auth = HttpNtlmAuth(username, password)
+        elif self.auth_method == "kerberos":
+            from requests_gssapi import HTTPSPNEGOAuth
+            import gssapi
+            oid = '1.3.6.1.5.5.2'  # SPNEGO
+            cred = gssapi.raw.acquire_cred_with_password(
+                gssapi.Name(username, gssapi.NameType.user),
+                password.encode("utf-8"),
+                mechs=[gssapi.OID.from_int_seq(oid)],
+                usage="initiate",
+            )
+            self.session.auth = HTTPSPNEGOAuth(creds=cred.creds)
         elif self.auth_method == "cert":
             self.session.cert = (username, password)
         else:
