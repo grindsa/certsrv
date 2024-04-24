@@ -58,6 +58,7 @@ class Certsrv(object):
         auth_method: The chosen authentication method. Either 'basic' (the default),
             'ntlm', 'cert' (SSL client certificate) or 'gssapi' (GSSAPI, Kerberos)
         cafile: A PEM file containing the CA certificates that should be trusted.
+        verify: Boolean to enable/disable CA certificate checking.
         timeout: The timeout to use against the CA server, in seconds.
             The default is 30.
         proxies: Dictionary of proxy server for post of get operations
@@ -70,7 +71,7 @@ class Certsrv(object):
     """
 
     def __init__(self, server, username, password, auth_method="basic",
-                 cafile=None, timeout=TIMEOUT, proxies=None):
+                 cafile=None,  verify=True, timeout=TIMEOUT, proxies=None):
 
         self.server = server
         self.timeout = timeout
@@ -78,7 +79,9 @@ class Certsrv(object):
         self.session = requests.Session()
         self.proxies = proxies
 
-        if cafile:
+        if not verify:
+            self.session.verify = False
+        elif cafile:
             self.session.verify = cafile
         else:
             # requests uses it's own CA bundle by default
