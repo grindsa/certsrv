@@ -3,6 +3,7 @@ A Python client for the Microsoft AD Certificate Services web page.
 
 https://github.com/magnuswatn/certsrv
 """
+# pylint: disable=C0209, C0415, R1720, R1705
 import os
 import re
 import base64
@@ -15,6 +16,8 @@ __version__ = "2.1.1"
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 30
+UNKOWN_ERR_MSG = "An unknown error occured"
+DEPRECATIONWARNING = "This function is deprecated. Use the method on the Certsrv class instead"
 
 
 class RequestDeniedException(Exception):
@@ -69,11 +72,12 @@ class Certsrv(object):
         the username parameter should be the path to a certificate, and
         the password parameter the path to a (unencrypted) private key.
     """
-
-    def __init__(self, server, username, password, auth_method="basic",
-                 cafile=None,  verify=True, timeout=TIMEOUT, proxies=None):
+    # pylint: disable=r0913
+    def __init__(self, server, url, username, password, auth_method="basic",
+                 cafile=None, verify=True, timeout=TIMEOUT, proxies=None):
 
         self.server = server
+        self.url = url
         self.timeout = timeout
         self.auth_method = auth_method
         self.session = requests.Session()
@@ -111,13 +115,14 @@ class Certsrv(object):
             from requests_gssapi import HTTPSPNEGOAuth
             import gssapi
             oid = '1.3.6.1.5.5.2'  # SPNEGO
+            # pylint: disable=e1101
             cred = gssapi.raw.acquire_cred_with_password(
                 gssapi.Name(username, gssapi.NameType.user),
                 password.encode("utf-8"),
                 mechs=[gssapi.OID.from_int_seq(oid)],
                 usage="initiate",
             )
-            self.session.auth = HTTPSPNEGOAuth(creds=cred.creds)
+            self.session.auth = HTTPSPNEGOAuth(creds=cred.creds, mech=gssapi.OID.from_int_seq(oid))
         else:
             self.session.auth = (username, password)
 
@@ -193,7 +198,11 @@ class Certsrv(object):
             "SaveCert": "yes",
         }
 
-        url = "https://{0}/certsrv/certfnsh.asp".format(self.server)
+        url = ""
+        if self.url:
+            url = "{0}/certfnsh.asp".format(self.url)
+        else:
+            url = "https://{0}/certsrv/certfnsh.asp".format(self.server)
 
         response = self._post(url, data=data)
 
@@ -204,6 +213,7 @@ class Certsrv(object):
             # We didn't find any request ID in the response. It may need approval.
             if re.search(r"Certificate Pending", response.text):
                 req_id = re.search(r"Your Request Id is (\d+).", response.text).group(1)
+                # pylint: disable=w0707
                 raise CertificatePendingException(req_id)
             else:
                 # Must have failed. Lets find the error message
@@ -213,7 +223,8 @@ class Certsrv(object):
                         r'The disposition message is "([^"]+)', response.text
                     ).group(1)
                 except AttributeError:
-                    error = "An unknown error occured"
+                    error = UNKOWN_ERR_MSG
+                # pylint: disable=w0707
                 raise RequestDeniedException(error, response.text)
 
         return self.get_existing_cert(req_id, encoding)
@@ -235,7 +246,12 @@ class Certsrv(object):
                 while fetching the cert.
         """
 
-        cert_url = "https://{0}/certsrv/certnew.cer".format(self.server)
+        cert_url = ""
+        if self.url:
+            cert_url = "{0}/certnew.cer".format(self.url)
+        else:
+            cert_url = "https://{0}/certsrv/certnew.cer".format(self.server)
+
         params = {"ReqID": req_id, "Enc": encoding}
 
         response = self._get(cert_url, params=params)
@@ -248,7 +264,7 @@ class Certsrv(object):
                 ).group(1)
 
             except AttributeError:
-                error = "An unknown error occured"
+                error = UNKOWN_ERR_MSG
             raise CouldNotRetrieveCertificateException(error, response.text)
         else:
             return response.content
@@ -264,7 +280,11 @@ class Certsrv(object):
         Returns:
             The newest CA certificate from the server.
         """
-        url = "https://{0}/certsrv/certcarc.asp".format(self.server)
+        url = ""
+        if self.url:
+            url = "{0}/certcarc.asp".format(self.url)
+        else:
+            url = "https://{0}/certsrv/certcarc.asp".format(self.server)
 
         response = self._get(url)
 
@@ -272,14 +292,18 @@ class Certsrv(object):
         # so that we get the newest CA cert.
         renewals = re.search(r"var nRenewals=(\d+);", response.text).group(1)
 
-        cert_url = "https://{0}/certsrv/certnew.cer".format(self.server)
+        cert_url = ""
+        if self.url:
+            cert_url = "{0}/certnew.cer".format(self.url)
+        else:
+            cert_url = "https://{0}/certsrv/certnew.cer".format(self.server)
         params = {"ReqID": "CACert", "Enc": encoding, "Renewal": renewals}
 
         response = self._get(cert_url, params=params)
 
         if response.headers["Content-Type"] != "application/pkix-cert":
             raise CouldNotRetrieveCertificateException(
-                "An unknown error occured", response.content
+                UNKOWN_ERR_MSG, response.content
             )
 
         return response.content
@@ -295,21 +319,30 @@ class Certsrv(object):
         Returns:
             The CA chain from the server, in PKCS#7 format.
         """
-        url = "https://{0}/certsrv/certcarc.asp".format(self.server)
+        url = ""
+        if self.url:
+            url = "{0}/certcarc.asp".format(self.url)
+        else:
+            url = "https://{0}/certsrv/certcarc.asp".format(self.server)
 
         response = self._get(url)
 
         # We have to check how many renewals this server has had, so that we get the newest chain
         renewals = re.search(r"var nRenewals=(\d+);", response.text).group(1)
 
-        chain_url = "https://{0}/certsrv/certnew.p7b".format(self.server)
+        chain_url = ""
+        if self.url:
+            chain_url = "{0}/certnew.p7b".format(self.url)
+        else:
+            chain_url = "https://{0}/certsrv/certnew.p7b".format(self.server)
+
         params = {"ReqID": "CACert", "Renewal": renewals, "Enc": encoding}
 
         chain_response = self._get(chain_url, params=params)
 
         if chain_response.headers["Content-Type"] != "application/x-pkcs7-certificates":
             raise CouldNotRetrieveCertificateException(
-                "An unknown error occured", chain_response.content
+                UNKOWN_ERR_MSG, chain_response.content
             )
 
         return chain_response.content
@@ -321,7 +354,11 @@ class Certsrv(object):
         Returns:
             True if authentication succeeded, False if it failed.
         """
-        url = "https://{0}/certsrv/".format(self.server)
+        url = ""
+        if self.url:
+            url = "{0}".format(self.url)
+        else:
+            url = "https://{0}/certsrv/".format(self.server)
 
         try:
             self._get(url)
@@ -347,15 +384,16 @@ class Certsrv(object):
             self.session.close()
         self._set_credentials(username, password)
 
+
 def _get_ca_bundle():
     """Tries to find the platform ca bundle for the system (on linux systems)"""
     ca_bundles = [
         # list taken from https://golang.org/src/crypto/x509/root_linux.go
-        "/etc/ssl/certs/ca-certificates.crt",                # Debian/Ubuntu/Gentoo etc.
-        "/etc/pki/tls/certs/ca-bundle.crt",                  # Fedora/RHEL 6
-        "/etc/ssl/ca-bundle.pem",                            # OpenSUSE
-        "/etc/pki/tls/cacert.pem",                           # OpenELEC
-        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", # CentOS/RHEL 7
+        "/etc/ssl/certs/ca-certificates.crt",                 # Debian/Ubuntu/Gentoo etc.
+        "/etc/pki/tls/certs/ca-bundle.crt",                   # Fedora/RHEL 6
+        "/etc/ssl/ca-bundle.pem",                             # OpenSUSE
+        "/etc/pki/tls/cacert.pem",                            # OpenELEC
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  # CentOS/RHEL 7
     ]
     for ca_bundle in ca_bundles:
         if os.path.isfile(ca_bundle):
@@ -363,6 +401,8 @@ def _get_ca_bundle():
     # if the bundle was not found, we revert back to requests own
     return True
 
+
+# pylint: disable=r0913
 def get_cert(server, csr, template, username, password, encoding="b64", **kwargs):
     """
     Gets a certificate from a Microsoft AD Certificate Services web page.
@@ -394,7 +434,7 @@ def get_cert(server, csr, template, username, password, encoding="b64", **kwargs
 
     """
     warnings.warn(
-        "This function is deprecated. Use the method on the Certsrv class instead",
+        DEPRECATIONWARNING,
         DeprecationWarning,
     )
     certsrv = Certsrv(server, username, password, **kwargs)
@@ -429,7 +469,7 @@ def get_existing_cert(server, req_id, username, password, encoding="b64", **kwar
         This method is deprecated.
     """
     warnings.warn(
-        "This function is deprecated. Use the method on the Certsrv class instead",
+        DEPRECATIONWARNING,
         DeprecationWarning,
     )
     certsrv = Certsrv(server, username, password, **kwargs)
@@ -458,7 +498,7 @@ def get_ca_cert(server, username, password, encoding="b64", **kwargs):
         This method is deprecated.
     """
     warnings.warn(
-        "This function is deprecated. Use the method on the Certsrv class instead",
+        DEPRECATIONWARNING,
         DeprecationWarning,
     )
     certsrv = Certsrv(server, username, password, **kwargs)
@@ -487,7 +527,7 @@ def get_chain(server, username, password, encoding="bin", **kwargs):
         This method is deprecated.
     """
     warnings.warn(
-        "This function is deprecated. Use the method on the Certsrv class instead",
+        DEPRECATIONWARNING,
         DeprecationWarning,
     )
     certsrv = Certsrv(server, username, password, **kwargs)
@@ -514,7 +554,7 @@ def check_credentials(server, username, password, **kwargs):
         This method is deprecated.
     """
     warnings.warn(
-        "This function is deprecated. Use the method on the Certsrv class instead",
+        DEPRECATIONWARNING,
         DeprecationWarning,
     )
     certsrv = Certsrv(server, username, password, **kwargs)
